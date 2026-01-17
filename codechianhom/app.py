@@ -12,6 +12,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 app = Flask(__name__)
 app.secret_key = "super_secret_key"
 
+# Configuration for target subject
+TARGET_SUBJECT_CODE = "CSE441"
+TARGET_SUBJECT_NAME = "Phát triển ứng dụng di động"
+
 def get_ca(start_index, end_index):
     if start_index == 1 and end_index == 3:
         return "Ca 1"
@@ -23,14 +27,26 @@ def get_ca(start_index, end_index):
         return "Ca 4"
     return None
 
-def extract_cse414_practice_ca(response_json):
+def extract_practise_subj(response_json):
     cas = []
     for course in response_json:
         subj = course.get("courseSubject", {})
+        if not subj:
+            continue
+            
         sem_subj = subj.get("semesterSubject", {}).get("subject", {})
         subject_code = sem_subj.get("subjectCode")
+        
+        # Simplified identification based on constants
+        code_full = subj.get("code", "") or ""
+        display_name = subj.get("displayName", "") or ""
+        is_target = (TARGET_SUBJECT_CODE in code_full) or (TARGET_SUBJECT_NAME[:15] in display_name)
+        
+        # In some data (like Semester 12 log), courseSubjectType is null
+        subject_type = subj.get("courseSubjectType")
+        is_practice = (subject_type == 6) or (subject_type is None)
 
-        if subject_code == "CSE414" and subj.get("courseSubjectType") == 6:
+        if is_target and is_practice:
             for tt in subj.get("timetables", []):
                 start_index = tt.get("startHour", {}).get("indexNumber")
                 end_index = tt.get("endHour", {}).get("indexNumber")
@@ -79,7 +95,8 @@ def form():
 
     url_summary = "https://sinhvien1.tlu.edu.vn/education/api/studentsummarymark/getbystudent"
     url_marks = "https://sinhvien1.tlu.edu.vn/education/api/studentsubjectmark/getListStudentMarkBySemesterByLoginUser/0"
-    url_courses = "https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/13"
+    url_courses = "https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/14"
+
 
     from concurrent.futures import ThreadPoolExecutor
 
@@ -106,7 +123,7 @@ def form():
             cse393 = item.get("mark")
             break
 
-    cas_cse414 = extract_cse414_practice_ca(courses_data)
+    practise_subj = extract_practise_subj(courses_data)
 
     if request.method == "POST":
         registered_class = request.form["registered_class"]
@@ -115,7 +132,7 @@ def form():
         strength = "; ".join(strengths)
         role = request.form["role"]
 
-        classes = ["64HTTT1", "64HTTT2", "64HTTT3", "64HTTT4"]
+        classes = ["65HTTT", "65CNTTT"]
         header = ["MSSV", "Họ tên", "Lớp hiện tại", "GPA", "Điểm ĐTĐM", "Ca học",
                   "Mục tiêu", "Điểm mạnh", "Vai trò mong muốn"]
 
@@ -154,7 +171,7 @@ def form():
                             "Lớp hiện tại": class_name,
                             "GPA": gpa,
                             "Điểm ĐTĐM": cse393,
-                            "Ca học": ", ".join(cas_cse414),
+                            "Ca học": ", ".join(practise_subj),
                             "Mục tiêu": goal,
                             "Điểm mạnh": strength,
                             "Vai trò mong muốn": role
@@ -169,7 +186,7 @@ def form():
                 "Lớp hiện tại": class_name,
                 "GPA": gpa,
                 "Điểm ĐTĐM": cse393,
-                "Ca học": ", ".join(cas_cse414),
+                "Ca học": ", ".join(practise_subj),
                 "Mục tiêu": goal,
                 "Điểm mạnh": strength,
                 "Vai trò mong muốn": role
@@ -185,7 +202,9 @@ def form():
 
     return render_template("form.html", name=name, mssv=mssv,
                        class_name=class_name, gpa=gpa, cse393=cse393,
-                       cas_cse414=cas_cse414)
+                       practise_subj=practise_subj,
+                       target_subject_name=TARGET_SUBJECT_NAME,
+                       target_subject_code=TARGET_SUBJECT_CODE)
 
 @app.route("/logout")
 def logout():
@@ -202,7 +221,7 @@ def admin():
     if "is_admin" not in session:
         return redirect(url_for("login"))
 
-    classes = ["64HTTT1", "64HTTT2", "64HTTT3", "64HTTT4"]
+    classes = ["65HTTT", "65CNTTT"]
     selected_class = request.args.get("class")
     action = request.args.get("action")
 
