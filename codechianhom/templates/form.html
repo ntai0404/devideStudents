@@ -17,46 +17,71 @@
         <p><b>GPA hệ 4:</b> {{ gpa }}</p>
         <p><b>Điểm Nhập môn điện toán đám mây (CSE393):</b> {{ cse393 }}</p>
 
-        <p><b>Ca thực hành {{ target_subject_name }} ({{ target_subject_code }}):</b>
-            {% if practise_subj %}
-            {{ practise_subj[0] }}
-            {% else %}
-            Không có ca thực hành môn này.
-            {% endif %}
-        </p>
-
-        <form method="POST" onsubmit="return validateStrength()">
-            <label>Lớp đăng ký:</label>
-            <select name="registered_class" required>
-                <option value="65HTTT">65HTTT</option>
-                <option value="65CNTTT">65CNTTT</option>
+        <form method="GET" action="{{ url_for('form') }}" id="subjectForm" style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <label style="color: #495057; font-weight: 600;">Chọn môn học cần chia nhóm:</label>
+            <select name="subject_code" onchange="document.getElementById('subjectForm').submit()" style="width: 100%; padding: 10px; margin-top: 8px; border: 1px solid #ced4da; border-radius: 8px; background-color: white; font-size: 1rem;">
+                {% if subjects %}
+                    {% for sub in subjects %}
+                    <option value="{{ sub.code }}" {% if sub.code == selected_subject_code %}selected{% endif %}>
+                        {{ sub.name }} ({{ sub.code }})
+                    </option>
+                    {% endfor %}
+                {% else %}
+                    <option disabled selected>Kì này không có sẵn môn học hỗ trợ</option>
+                {% endif %}
             </select>
-
-            <label>Mục tiêu:</label>
-            <select name="goal" required>
-                <option value="A">A</option>
-                <option value="B">B</option>
-                <option value="C">C</option>
-                <option value="D">D</option>
-            </select>
-
-            <label>Điểm mạnh:</label>
-            <input type="checkbox" name="strength" value="Thuyết trình"> Thuyết trình<br>
-            <input type="checkbox" name="strength" value="Thiết kế"> Thiết kế<br>
-            <input type="checkbox" name="strength" value="Tìm nội dung"> Tìm nội dung<br>
-            <input type="checkbox" name="strength" value="Lập trình"> Lập trình<br>
-
-            <label>Vai trò mong muốn:</label>
-            <select name="role" required>
-                <option value="Nhóm trưởng">Nhóm trưởng</option>
-                <option value="Thành viên">Thành viên</option>
-            </select>
-
-            <button type="submit">Gửi thông tin</button>
         </form>
 
-        <form method="GET" action="{{ url_for('logout') }}">
-            <button type="submit">Đăng xuất</button>
+
+        <form method="POST" onsubmit="return validateStrength()" class="registration-form">
+            <div class="form-group">
+                <label>Lớp thực hành đăng ký:</label>
+                {% if practice_classes %}
+                    {% set pc = practice_classes[0] %}
+                    <div style="padding: 12px 15px; background: #e7f1ff; border: 1px solid #b6d4fe; border-radius: var(--radius); color: #0056b3; font-weight: 600;">
+                        {{ pc.name }} ({{ pc.sessions | join(', ') }})
+                    </div>
+                    <input type="hidden" name="registered_class" value="{{ pc.code }}">
+                {% else %}
+                    <div style="padding: 12px 15px; background: #fff5f5; border: 1px solid #fab1a0; border-radius: var(--radius); color: #dc3545;">
+                        Không tìm thấy lớp thực hành trong lịch học của bạn.
+                    </div>
+                    <input type="hidden" name="registered_class" value="Unknown">
+                {% endif %}
+            </div>
+
+            <div class="form-group">
+                <label>Mục tiêu điểm số:</label>
+                <select name="goal" required>
+                    <option value="A" {% if existing_data.get('Mục tiêu') == 'A' %}selected{% endif %}>A</option>
+                    <option value="B" {% if existing_data.get('Mục tiêu') == 'B' %}selected{% endif %}>B</option>
+                    <option value="C" {% if existing_data.get('Mục tiêu') == 'C' %}selected{% endif %}>C</option>
+                    <option value="D" {% if existing_data.get('Mục tiêu') == 'D' %}selected{% endif %}>D</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Điểm mạnh:</label>
+                {% set strengths = existing_data.get('Điểm mạnh', '').split('; ') %}
+                <input type="checkbox" name="strength" value="Thuyết trình" {% if 'Thuyết trình' in strengths %}checked{% endif %}> Thuyết trình<br>
+                <input type="checkbox" name="strength" value="Thiết kế" {% if 'Thiết kế' in strengths %}checked{% endif %}> Thiết kế<br>
+                <input type="checkbox" name="strength" value="Tìm nội dung" {% if 'Tìm nội dung' in strengths %}checked{% endif %}> Tìm nội dung<br>
+                <input type="checkbox" name="strength" value="Lập trình" {% if 'Lập trình' in strengths %}checked{% endif %}> Lập trình<br>
+            </div>
+
+            <div class="form-group">
+                <label>Vai trò mong muốn:</label>
+                <select name="role" required>
+                    <option value="Nhóm trưởng" {% if existing_data.get('Vai trò mong muốn') == 'Nhóm trưởng' %}selected{% endif %}>Nhóm trưởng</option>
+                    <option value="Thành viên" {% if existing_data.get('Vai trò mong muốn') == 'Thành viên' %}selected{% endif %}>Thành viên</option>
+                </select>
+            </div>
+
+            <button type="submit" class="submit-btn">Gửi thông tin đăng ký</button>
+        </form>
+
+        <form method="GET" action="{{ url_for('logout') }}" style="margin-top: 20px;">
+            <button type="submit" class="logout-btn">Đăng xuất</button>
         </form>
     </div>
 

@@ -18,12 +18,12 @@
     <p style="margin-top:6px;">Bạn có thể đăng xuất hoặc quay lại trang chính để sửa thông tin.</p>
 
     <div style="margin-top:20px;">
-      <form method="GET" action="{{ url_for('logout') }}" style="margin-bottom:10px;">
-        <button type="submit">Đăng xuất</button>
+      <form method="GET" action="{{ url_for('form') }}" style="margin-bottom:10px;">
+        <button type="submit" class="submit-btn">Quay lại trang chính</button>
       </form>
 
-      <form method="GET" action="{{ url_for('form') }}">
-        <button type="submit">Quay lại</button>
+      <form method="GET" action="{{ url_for('logout') }}">
+        <button type="submit" class="logout-btn">Đăng xuất</button>
       </form>
     </div>
   </div>

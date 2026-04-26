@@ -3,18 +3,34 @@ import requests
 import csv
 import os
 import urllib3
+import unicodedata
 from chia_nhom import divide_groups
 from flask import send_file
 import io
+import traceback
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 app.secret_key = "super_secret_key"
 
-# Configuration for target subject
+ADMIN_USER = "admin"
+ADMIN_PASS = "admin"
+
+# Configuration for target subjects
+ALLOWED_SUBJECT_LIST = [
+    {"code": "CSE441", "name": "Phát triển ứng dụng di động"},
+    {"code": "CSE450", "name": "Hệ thống kinh doanh thông minh"},
+    {"code": "CSE455", "name": "Quản trị hệ thống thông tin"},
+    {"code": "CSE393", "name": "Nhập môn điện toán đám mây"}
+]
 TARGET_SUBJECT_CODE = "CSE441"
 TARGET_SUBJECT_NAME = "Phát triển ứng dụng di động"
+
+def normalize_vn(text):
+    if not text or not isinstance(text, str):
+        return text
+    return unicodedata.normalize('NFC', text)
 
 def get_ca(start_index, end_index):
     if start_index == 1 and end_index == 3:
@@ -27,7 +43,56 @@ def get_ca(start_index, end_index):
         return "Ca 4"
     return None
 
-def extract_practise_subj(response_json):
+def get_subjects_from_courses(response_json):
+    subjects_map = {}
+    
+    # Identify all subjects first from any entry
+    for item in response_json:
+        subj = item.get("courseSubject", {})
+        if not subj: continue
+        
+        sem_subj = subj.get("semesterSubject", {}).get("subject", {})
+        full_code = (sem_subj.get("subjectCode") or subj.get("code") or "").upper()
+        display_name = normalize_vn(subj.get("displayName") or sem_subj.get("subjectName") or full_code)
+        
+        base_code = full_code.split('_')[0] if '_' in full_code else full_code
+        
+        if base_code not in subjects_map:
+            subjects_map[base_code] = {
+                "code": base_code,
+                "name": display_name,
+                "practice_classes": []
+            }
+        
+        subject_type = subj.get("courseSubjectType")
+        if subject_type == 6:
+            sessions = []
+            for tt in subj.get("timetables", []):
+                start = tt.get("startHour", {}).get("indexNumber")
+                end = tt.get("endHour", {}).get("indexNumber")
+                ca = get_ca(start, end)
+                if ca and ca not in sessions:
+                    sessions.append(ca)
+            
+            subjects_map[base_code]["practice_classes"].append({
+                "code": subj.get("code") or full_code,
+                "name": normalize_vn(subj.get("displayName") or ""),
+                "sessions": sessions
+            })
+        elif subject_type == 1 or subject_type is None:
+             # Prefer main class name if available
+             subjects_map[base_code]["name"] = display_name
+
+    # Return subjects that have practice classes
+    result = []
+    for bc in sorted(subjects_map.keys()):
+        s = subjects_map[bc]
+        if s["practice_classes"]:
+            result.append(s)
+    return result
+
+def extract_practise_subj(response_json, target_code=None, target_name=None):
+    """Extract practical session names (Ca) for a specific target subject."""
     cas = []
     for course in response_json:
         subj = course.get("courseSubject", {})
@@ -37,10 +102,15 @@ def extract_practise_subj(response_json):
         sem_subj = subj.get("semesterSubject", {}).get("subject", {})
         subject_code = sem_subj.get("subjectCode")
         
-        # Simplified identification based on constants
+        # Identification based on provided target
         code_full = subj.get("code", "") or ""
         display_name = subj.get("displayName", "") or ""
-        is_target = (TARGET_SUBJECT_CODE in code_full) or (TARGET_SUBJECT_NAME[:15] in display_name)
+        
+        is_target = False
+        if target_code and subject_code:
+            is_target = (target_code in subject_code) or (target_code in code_full)
+        if not is_target and target_name:
+            is_target = (target_name[:15] in display_name)
         
         # In some data (like Semester 12 log), courseSubjectType is null
         subject_type = subj.get("courseSubjectType")
@@ -54,7 +124,7 @@ def extract_practise_subj(response_json):
                 if ca:
                     cas.append(ca)
 
-    return list(set(cas))
+    return list(dict.fromkeys(cas))
 
 @app.route("/", methods=["GET", "POST"])
 def login():
@@ -75,15 +145,16 @@ def login():
             "password": password,
         }
         resp = requests.post(url_token, data=data, verify=False)
-        if resp.status_code == 200:
-            token_info = resp.json()
-            session["access_token"] = token_info["access_token"]
-            session["username"] = username
-            return redirect(url_for("form"))
-        else:
+
+        if resp.status_code != 200:
             return render_template("login.html", error="Sai MSSV hoặc mật khẩu")
 
-    return render_template("login.html", error=None)
+        token_data = resp.json()
+        session["access_token"] = token_data["access_token"]
+        session["username"] = username
+        return redirect(url_for("form"))
+
+    return render_template("login.html")
 
 @app.route("/form", methods=["GET", "POST"])
 def form():
@@ -91,104 +162,147 @@ def form():
         return redirect(url_for("login"))
 
     headers = {"Authorization": f"Bearer {session['access_token']}"}
-    mssv = session["username"]
+    mssv = session.get("username")
+    
+    # Try to get data from cache (session) to avoid TLU API instability and speed up reloads
+    cached = session.get("student_cache")
+    if cached and "summary" in cached:
+        summary = cached["summary"]
+        marks_data = cached["marks_data"]
+        semesters = cached["semesters"]
+        courses_data = cached["courses_data"]
+    else:
+        url_summary = "https://sinhvien1.tlu.edu.vn/education/api/studentsummarymark/getbystudent"
+        url_marks = "https://sinhvien1.tlu.edu.vn/education/api/studentsubjectmark/getListStudentMarkBySemesterByLoginUser/0"
+        url_semesters = "https://sinhvien1.tlu.edu.vn/education/api/semester/all"
+        
+        from concurrent.futures import ThreadPoolExecutor
 
-    url_summary = "https://sinhvien1.tlu.edu.vn/education/api/studentsummarymark/getbystudent"
-    url_marks = "https://sinhvien1.tlu.edu.vn/education/api/studentsubjectmark/getListStudentMarkBySemesterByLoginUser/0"
-    url_courses = "https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/14"
+        def fetch(url):
+            try:
+                r = requests.get(url, headers=headers, verify=False, timeout=10)
+                return r.json() if r.status_code == 200 else None
+            except:
+                return None
 
+        with ThreadPoolExecutor() as executor:
+            future_summary = executor.submit(fetch, url_summary)
+            future_marks = executor.submit(fetch, url_marks)
+            future_semesters = executor.submit(fetch, url_semesters)
 
-    from concurrent.futures import ThreadPoolExecutor
+            summary = future_summary.result()
+            marks_data = future_marks.result()
+            semesters = future_semesters.result()
 
-    def fetch(url):
-        return requests.get(url, headers=headers, verify=False).json()
+        # Determine current semester ID automatically
+        semester_id = "14" # default fallback
+        if semesters and isinstance(semesters, list):
+            current = next((s for s in semesters if s.get("isCurrent")), None)
+            if current:
+                semester_id = str(current.get("id"))
+            else:
+                semester_id = str(semesters[-1].get("id"))
 
-    with ThreadPoolExecutor() as executor:
-        future_summary = executor.submit(fetch, url_summary)
-        future_marks = executor.submit(fetch, url_marks)
-        future_courses = executor.submit(fetch, url_courses)
+        url_courses = f"https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/{semester_id}"
+        courses_data = fetch(url_courses)
+        
+        # Save to cache ONLY if data is valid
+        if summary and courses_data and isinstance(summary, dict) and summary.get("student"):
+            session["student_cache"] = {
+                "summary": summary,
+                "marks_data": marks_data,
+                "semesters": semesters,
+                "courses_data": courses_data
+            }
+        else:
+            # If API failed, clear any old bad cache just in case
+            session.pop("student_cache", None)
 
-        summary = future_summary.result()
-        marks_data = future_marks.result()
-        courses_data = future_courses.result()
-
-    student = summary.get("student", {})
-    name = student.get("displayName")
+    student = summary.get("student", {}) if summary else {}
+    name = normalize_vn(student.get("displayName") or "Sinh viên")
     class_name = student.get("enrollmentClass", {}).get("className")
-    gpa = summary.get("mark4")
+    gpa = summary.get("mark4") if summary else None
 
     cse393 = None
-    for item in marks_data:
-        if isinstance(item, dict) and item.get("subject", {}).get("subjectCode") == "CSE393":
-            cse393 = item.get("mark")
-            break
+    if marks_data:
+        for item in marks_data:
+            if isinstance(item, dict) and item.get("subject", {}).get("subjectCode") == "CSE393":
+                cse393 = item.get("mark")
+                break
 
-    practise_subj = extract_practise_subj(courses_data)
+    subjects = get_subjects_from_courses(courses_data or [])
+    
+    selected_subject_code = request.values.get("subject_code")
+    selected_subject = next((s for s in subjects if s["code"] == selected_subject_code), subjects[0] if subjects else None)
+    
+    if selected_subject:
+        selected_subject_code = selected_subject["code"]
+        selected_subject_name = selected_subject["name"]
+        practice_classes = selected_subject["practice_classes"]
+    else:
+        selected_subject_code = None
+        selected_subject_name = "Không có môn học hỗ trợ"
+        practice_classes = []
+
+    # Auto-fill from existing CSV if available
+    existing_data = {}
+    if practice_classes:
+        # Check all possible practice classes for this student
+        for pc in practice_classes:
+            cf = f"{pc['code']}.csv"
+            if os.path.exists(cf):
+                with open(cf, "r", encoding="utf-8-sig") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        if row["MSSV"] == mssv and row["Môn học"] == selected_subject_name:
+                            existing_data = row
+                            break
+            if existing_data: break
 
     if request.method == "POST":
         registered_class = request.form["registered_class"]
-        goal = request.form["goal"]
+        p_class = next((p for p in practice_classes if p["code"] == registered_class or p["name"] == registered_class), None)
+        sessions_str = ", ".join(p_class["sessions"]) if p_class else ""
+
+        goal = request.form.get("goal")
         strengths = request.form.getlist("strength")
-        strength = "; ".join(strengths)
-        role = request.form["role"]
-
-        classes = ["65HTTT", "65CNTTT"]
-        header = ["MSSV", "Họ tên", "Lớp hiện tại", "GPA", "Điểm ĐTĐM", "Ca học",
-                  "Mục tiêu", "Điểm mạnh", "Vai trò mong muốn"]
-
-        for cls in classes:
-            if cls == registered_class:
-                continue
-            file_path = f"{cls}.csv"
-            if os.path.exists(file_path):
-                rows = []
-                with open(file_path, "r", newline="", encoding="utf-8-sig") as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        if row["MSSV"] != mssv:
-                            rows.append(row)
-                with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
-                    writer = csv.DictWriter(f, fieldnames=reader.fieldnames)
-                    writer.writeheader()
-                    writer.writerows(rows)
+        role = request.form.get("role")
 
         class_file = f"{registered_class}.csv"
-        if not os.path.exists(class_file) or os.path.getsize(class_file) == 0:
-            with open(class_file, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.DictWriter(f, fieldnames=header)
-                writer.writeheader()
-
+        header = ["Môn học", "MSSV", "Họ tên", "Lớp hiện tại", "GPA", "Điểm ĐTĐM", "Ca học", "Mục tiêu", "Điểm mạnh", "Vai trò mong muốn"]
+        
         rows = []
-        updated = False
-        if os.path.exists(class_file):
-            with open(class_file, "r", newline="", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    if row["MSSV"] == mssv:
-                        row = {
-                            "MSSV": mssv,
-                            "Họ tên": name,
-                            "Lớp hiện tại": class_name,
-                            "GPA": gpa,
-                            "Điểm ĐTĐM": cse393,
-                            "Ca học": ", ".join(practise_subj),
-                            "Mục tiêu": goal,
-                            "Điểm mạnh": strength,
-                            "Vai trò mong muốn": role
-                        }
-                        updated = True
-                    rows.append(row)
+        if os.path.exists(class_file) and os.path.getsize(class_file) > 0:
+            with open(class_file, "r", encoding="utf-8-sig") as f:
+                rows = list(csv.DictReader(f))
 
-        if not updated:
+        found = False
+        for r in rows:
+            if r["MSSV"] == mssv and r["Môn học"] == selected_subject_name:
+                r.update({
+                    "Họ tên": name,
+                    "Lớp hiện tại": class_name or "",
+                    "GPA": gpa or "",
+                    "Điểm ĐTĐM": cse393 or "",
+                    "Ca học": sessions_str,
+                    "Mục tiêu": goal,
+                    "Điểm mạnh": "; ".join(strengths),
+                    "Vai trò mong muốn": role
+                })
+                found = True
+                break
+        
+        if not found:
             rows.append({
+                "Môn học": selected_subject_name,
                 "MSSV": mssv,
                 "Họ tên": name,
-                "Lớp hiện tại": class_name,
-                "GPA": gpa,
-                "Điểm ĐTĐM": cse393,
-                "Ca học": ", ".join(practise_subj),
+                "Lớp hiện tại": class_name or "",
+                "GPA": gpa or "",
+                "Điểm ĐTĐM": cse393 or "",
+                "Ca học": sessions_str,
                 "Mục tiêu": goal,
-                "Điểm mạnh": strength,
+                "Điểm mạnh": "; ".join(strengths),
                 "Vai trò mong muốn": role
             })
 
@@ -199,12 +313,14 @@ def form():
 
         return render_template("submitted.html", name=name, registered_class=registered_class)
 
-
     return render_template("form.html", name=name, mssv=mssv,
                        class_name=class_name, gpa=gpa, cse393=cse393,
-                       practise_subj=practise_subj,
-                       target_subject_name=TARGET_SUBJECT_NAME,
-                       target_subject_code=TARGET_SUBJECT_CODE)
+                       target_subject_name=selected_subject_name,
+                       target_subject_code=selected_subject_code,
+                       subjects=subjects,
+                       practice_classes=practice_classes,
+                       selected_subject_code=selected_subject_code,
+                       existing_data=existing_data)
 
 @app.route("/logout")
 def logout():
@@ -213,29 +329,35 @@ def logout():
 
 import pandas as pd
 
-ADMIN_USER = "admin"
-ADMIN_PASS = "123456"
-
 @app.route("/admin", methods=["GET"])
 def admin():
     if "is_admin" not in session:
         return redirect(url_for("login"))
 
-    classes = ["65HTTT", "65CNTTT"]
+    # Dynamically find available classes from CSV files
+    classes = [f.replace(".csv", "") for f in os.listdir(".") if f.endswith(".csv") and not f.endswith("_grouped.csv") and not f.endswith("_original.csv")]
+    classes.sort()
     selected_class = request.args.get("class")
     action = request.args.get("action")
 
-    df = None
+    df = pd.DataFrame()
     html_summaries = None
+    available_subjects = []
+    selected_subject = None
 
     if selected_class:
         class_file = f"{selected_class}.csv"
         if os.path.exists(class_file) and os.path.getsize(class_file) > 0:
             df = pd.read_csv(class_file)
             df.insert(0, "STT", range(1, len(df)+1))
-        else:
-            df = pd.DataFrame()
-            html_summaries = None
+        # Get unique subjects for filtering
+        available_subjects = df['Môn học'].unique().tolist() if not df.empty and 'Môn học' in df.columns else []
+        selected_subject = request.args.get("subject")
+        if not selected_subject and available_subjects:
+             selected_subject = available_subjects[0]
+        
+        if selected_subject and not df.empty and 'Môn học' in df.columns:
+            df = df[df['Môn học'] == selected_subject].copy()
 
         if action == "group" and not df.empty:
             df['Điểm tổng'] = df.apply(
@@ -280,7 +402,7 @@ def admin():
             export_df.insert(0, "STT", range(1, len(export_df)+1))
 
             desired_order = [
-                "STT", "GroupID", "MSSV", "Họ tên", "Lớp hiện tại",
+                "STT", "GroupID", "Môn học", "MSSV", "Họ tên", "Lớp hiện tại",
                 "GPA", "Điểm ĐTĐM", "Điểm tổng",
                 "Mục tiêu", "Điểm mạnh", "Vai trò mong muốn"
             ]
@@ -290,23 +412,20 @@ def admin():
             buf = io.StringIO()
             export_df.to_csv(buf, index=False, encoding="utf-8-sig")
             buf.seek(0)
-
-            return send_file(
-                io.BytesIO(buf.getvalue().encode("utf-8-sig")),
-                as_attachment=True,
-                download_name=output_file,
-                mimetype="text/csv"
-            )
+            return send_file(io.BytesIO(buf.read().encode("utf-8-sig")),
+                             as_attachment=True,
+                             download_name=output_file,
+                             mimetype='text/csv')
 
     return render_template("admin.html",
                            classes=classes,
                            selected_class=selected_class,
+                           selected_subject=selected_subject,
+                           available_subjects=available_subjects,
                            df=df,
                            html_summaries=html_summaries)
 
 from waitress import serve
 
 if __name__ == "__main__":
-    cores = 5
-    threads = cores * 6
-    serve(app, host="0.0.0.0", port=5000, threads=threads)
+    app.run(debug=True, host="0.0.0.0", port=5000)

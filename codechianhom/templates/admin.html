@@ -10,14 +10,25 @@
     <!-- Nút đăng xuất -->
     <a href="{{ url_for('logout') }}" class="logout-btn">Đăng xuất</a>
 
-    <!-- Chọn lớp -->
+    <!-- Chọn lớp và môn -->
     <form method="get" action="{{ url_for('admin') }}">
         <label>Chọn lớp:</label>
-        <select name="class">
+        <select name="class" onchange="this.form.submit()">
+            <option value="">-- Chọn lớp --</option>
             {% for cls in classes %}
             <option value="{{ cls }}" {% if selected_class==cls %}selected{% endif %}>{{ cls }}</option>
             {% endfor %}
         </select>
+
+        {% if available_subjects %}
+        <label style="margin-left: 20px;">Chọn môn:</label>
+        <select name="subject" onchange="this.form.submit()">
+            {% for sub in available_subjects %}
+            <option value="{{ sub }}" {% if selected_subject==sub %}selected{% endif %}>{{ sub }}</option>
+            {% endfor %}
+        </select>
+        {% endif %}
+
         <button type="submit" class="primary-btn">Xem</button>
     </form>
 
@@ -25,12 +36,14 @@
         <div class="button-row">
             <form method="get" action="{{ url_for('admin') }}" style="display:inline-block;">
                 <input type="hidden" name="class" value="{{ selected_class }}">
+                <input type="hidden" name="subject" value="{{ selected_subject }}">
                 <input type="hidden" name="action" value="group">
                 <button type="submit" class="primary-btn">Chia nhóm</button>
             </form>
 
             <form method="get" action="{{ url_for('admin') }}" style="display:inline-block;">
                 <input type="hidden" name="class" value="{{ selected_class }}">
+                <input type="hidden" name="subject" value="{{ selected_subject }}">
                 <input type="hidden" name="action" value="save_original">
                 <button type="submit" class="primary-btn">Lưu danh sách</button>
             </form>
@@ -55,6 +68,7 @@
 
             <form method="get" action="{{ url_for('admin') }}">
                 <input type="hidden" name="class" value="{{ selected_class }}">
+                <input type="hidden" name="subject" value="{{ selected_subject }}">
                 <input type="hidden" name="action" value="export">
                 <button type="submit" class="primary-btn">Lưu kết quả</button>
             </form>
