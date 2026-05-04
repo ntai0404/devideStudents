@@ -14,9 +14,10 @@
     <form method="get" action="{{ url_for('admin') }}">
         <label>Chọn lớp:</label>
         <select name="class">
-            <option value="65HTTT" {% if selected_class=='65HTTT' %}selected{% endif %}>65HTTT</option>
+            {% for cls in classes %}
+            <option value="{{ cls }}" {% if selected_class==cls %}selected{% endif %}>{{ cls }}</option>
+            {% endfor %}
         </select>
-
         <button type="submit" class="primary-btn">Xem</button>
     </form>
 

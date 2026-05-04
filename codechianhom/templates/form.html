@@ -28,7 +28,7 @@
         <form method="POST" onsubmit="return validateStrength()">
             <label>Lớp đăng ký:</label>
             <select name="registered_class" required>
-                <option value="65HTTT5">65HTTT5</option>
+                <option value="65HTTT">65HTTT</option>
             </select>
 
             <label>Mục tiêu:</label>
@@ -54,8 +54,8 @@
             <button type="submit">Gửi thông tin</button>
         </form>
 
-        <form method="GET" action="{{ url_for('logout') }}" style="margin-top: 20px;">
-            <button type="submit" class="logout-btn">Đăng xuất</button>
+        <form method="GET" action="{{ url_for('logout') }}">
+            <button type="submit">Đăng xuất</button>
         </form>
     </div>
 
