@@ -334,13 +334,7 @@ def admin():
     if "is_admin" not in session:
         return redirect(url_for("login"))
 
-<<<<<<< HEAD
-    # Dynamically find available classes from CSV files
-    classes = [f.replace(".csv", "") for f in os.listdir(".") if f.endswith(".csv") and not f.endswith("_grouped.csv") and not f.endswith("_original.csv")]
-    classes.sort()
-=======
     classes = ["65HTTT"]
->>>>>>> 6f4f7e1 (fix quick 4/5/26)
     selected_class = request.args.get("class")
     action = request.args.get("action")
 
