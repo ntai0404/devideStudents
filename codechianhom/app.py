@@ -74,14 +74,27 @@ def login():
             "username": username,
             "password": password,
         }
-        resp = requests.post(url_token, data=data, verify=False)
-        if resp.status_code == 200:
-            token_info = resp.json()
-            session["access_token"] = token_info["access_token"]
-            session["username"] = username
-            return redirect(url_for("form"))
-        else:
-            return render_template("login.html", error="Sai MSSV hoặc mật khẩu")
+        
+        try:
+            resp = requests.post(url_token, data=data, verify=False, timeout=30)
+            if resp.status_code == 200:
+                token_info = resp.json()
+                session["access_token"] = token_info["access_token"]
+                session["username"] = username
+                return redirect(url_for("form"))
+            elif resp.status_code == 401:
+                print(f"[LOGIN] 401 - Invalid credentials: {username}")
+                return render_template("login.html", error="Sai MSSV hoặc mật khẩu")
+            else:
+                error_msg = resp.text[:200]
+                print(f"[LOGIN] {resp.status_code} - {error_msg}")
+                return render_template("login.html", error=f"Lỗi server ({resp.status_code}). Vui lòng thử lại sau.")
+        except requests.exceptions.Timeout:
+            print(f"[LOGIN] Timeout - API quá chậm")
+            return render_template("login.html", error="API trường không phản hồi. Vui lòng thử lại.")
+        except Exception as e:
+            print(f"[LOGIN] Exception: {e}")
+            return render_template("login.html", error=f"Lỗi kết nối: {str(e)[:100]}")
 
     return render_template("login.html", error=None)
 
@@ -99,18 +112,28 @@ def form():
 
 
     from concurrent.futures import ThreadPoolExecutor
-
+    
     def fetch(url):
-        return requests.get(url, headers=headers, verify=False).json()
+        try:
+            resp = requests.get(url, headers=headers, verify=False, timeout=30)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            print(f"[FORM] Error fetching {url}: {e}")
+            return {}
 
-    with ThreadPoolExecutor() as executor:
-        future_summary = executor.submit(fetch, url_summary)
-        future_marks = executor.submit(fetch, url_marks)
-        future_courses = executor.submit(fetch, url_courses)
+    try:
+        with ThreadPoolExecutor() as executor:
+            future_summary = executor.submit(fetch, url_summary)
+            future_marks = executor.submit(fetch, url_marks)
+            future_courses = executor.submit(fetch, url_courses)
 
-        summary = future_summary.result()
-        marks_data = future_marks.result()
-        courses_data = future_courses.result()
+            summary = future_summary.result(timeout=35)
+            marks_data = future_marks.result(timeout=35)
+            courses_data = future_courses.result(timeout=35)
+    except Exception as e:
+        print(f"[FORM] ThreadPool error: {e}")
+        return render_template("form.html", error="Không thể lấy dữ liệu từ server trường. Vui lòng thử lại sau.")
 
     student = summary.get("student", {})
     name = student.get("displayName")
