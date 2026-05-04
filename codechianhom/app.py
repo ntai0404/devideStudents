@@ -1,4 +1,4 @@
-﻿from flask import Flask, request, session, redirect, url_for, render_template, send_file
+from flask import Flask, request, session, redirect, url_for, render_template, send_file
 import requests
 import csv
 import os
@@ -102,51 +102,60 @@ def login():
 def form():
     if "access_token" not in session:
         return redirect(url_for("login"))
+        
+    if request.method == "GET":
+        headers = {
+            "Authorization": f"Bearer {session['access_token']}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        url_summary = "https://sinhvien1.tlu.edu.vn/education/api/studentsummarymark/getbystudent"
+        url_marks = "https://sinhvien1.tlu.edu.vn/education/api/studentsubjectmark/getListStudentMarkBySemesterByLoginUser/0"
+        url_courses = "https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/14"
+        
+        from concurrent.futures import ThreadPoolExecutor
+        def fetch(url):
+            try:
+                resp = requests.get(url, headers=headers, verify=False, timeout=120)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                print(f"[FORM] Error fetching {url}: {e}")
+                return {}
 
-    headers = {"Authorization": f"Bearer {session['access_token']}"}
-    mssv = session["username"]
-
-    url_summary = "https://sinhvien1.tlu.edu.vn/education/api/studentsummarymark/getbystudent"
-    url_marks = "https://sinhvien1.tlu.edu.vn/education/api/studentsubjectmark/getListStudentMarkBySemesterByLoginUser/0"
-    url_courses = "https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/14"
-
-
-    from concurrent.futures import ThreadPoolExecutor
-    
-    def fetch(url):
         try:
-            resp = requests.get(url, headers=headers, verify=False, timeout=30)
-            resp.raise_for_status()
-            return resp.json()
+            with ThreadPoolExecutor() as executor:
+                future_summary = executor.submit(fetch, url_summary)
+                future_marks = executor.submit(fetch, url_marks)
+                future_courses = executor.submit(fetch, url_courses)
+
+                summary = future_summary.result(timeout=130)
+                marks_data = future_marks.result(timeout=130)
+                courses_data = future_courses.result(timeout=130)
         except Exception as e:
-            print(f"[FORM] Error fetching {url}: {e}")
-            return {}
+            print(f"[FORM] ThreadPool error: {e}")
+            return render_template("form.html", error="Khong the lay du lieu tu server truong. Vui long thu lai sau.")
 
-    try:
-        with ThreadPoolExecutor() as executor:
-            future_summary = executor.submit(fetch, url_summary)
-            future_marks = executor.submit(fetch, url_marks)
-            future_courses = executor.submit(fetch, url_courses)
+        student = summary.get("student", {})
+        session["student_name"] = student.get("displayName")
+        session["class_name"] = student.get("enrollmentClass", {}).get("className")
+        session["gpa"] = summary.get("mark4")
 
-            summary = future_summary.result(timeout=35)
-            marks_data = future_marks.result(timeout=35)
-            courses_data = future_courses.result(timeout=35)
-    except Exception as e:
-        print(f"[FORM] ThreadPool error: {e}")
-        return render_template("form.html", error="Không thể lấy dữ liệu từ server trường. Vui lòng thử lại sau.")
+        cse393 = None
+        for item in marks_data:
+            if isinstance(item, dict) and item.get("subject", {}).get("subjectCode") == "CSE393":
+                cse393 = item.get("mark")
+                break
+        session["cse393_mark"] = cse393
+        session["practise_subj"] = extract_practise_subj(courses_data)
 
-    student = summary.get("student", {})
-    name = student.get("displayName")
-    class_name = student.get("enrollmentClass", {}).get("className")
-    gpa = summary.get("mark4")
-
-    cse393 = None
-    for item in marks_data:
-        if isinstance(item, dict) and item.get("subject", {}).get("subjectCode") == "CSE393":
-            cse393 = item.get("mark")
-            break
-
-    practise_subj = extract_practise_subj(courses_data)
+    # Retrieve from session for both GET and POST
+    name = session.get("student_name")
+    mssv = session.get("username")
+    class_name = session.get("class_name")
+    gpa = session.get("gpa")
+    cse393 = session.get("cse393_mark")
+    practise_subj = session.get("practise_subj", [])
 
     if request.method == "POST":
         registered_class = request.form["registered_class"]

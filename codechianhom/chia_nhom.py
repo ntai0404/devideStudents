@@ -28,63 +28,66 @@ def divide_groups(df, max_group_size=5):
 
         group_scores = [g['Điểm tổng'].values.copy() for g in groups]
 
-        while improved and iter_count < max_iter:
-            iter_count += 1
+        if n_groups >= 2:
+            while improved and iter_count < max_iter:
+                iter_count += 1
+                improved = False
+                avg_scores = [scores.mean() for scores in group_scores]
+                max_idx = avg_scores.index(max(avg_scores))
+                min_idx = avg_scores.index(min(avg_scores))
+                max_group = groups[max_idx]
+                min_group = groups[min_idx]
+                max_scores = group_scores[max_idx]
+                min_scores = group_scores[min_idx]
+
+                best_score = max(avg_scores) - min(avg_scores)
+                best_swap = None
+
+                for i, s_max in enumerate(max_scores):
+                    for j, s_min in enumerate(min_scores):
+                        temp_max_scores = max_scores.copy()
+                        temp_min_scores = min_scores.copy()
+                        temp_max_scores[i], temp_min_scores[j] = s_min, s_max
+
+                        new_avg_scores = avg_scores.copy()
+                        new_avg_scores[max_idx] = temp_max_scores.mean()
+                        new_avg_scores[min_idx] = temp_min_scores.mean()
+                        new_diff = max(new_avg_scores) - min(new_avg_scores)
+
+                        skills_max = set(max_group['Điểm mạnh'].iloc[i].split("; ")) if pd.notna(max_group['Điểm mạnh'].iloc[i]) else set()
+                        skills_min = set(min_group['Điểm mạnh'].iloc[j].split("; ")) if pd.notna(min_group['Điểm mạnh'].iloc[j]) else set()
+                        temp_max_skills = set(itertools.chain.from_iterable(
+                            [s.split("; ") for k, s in max_group['Điểm mạnh'].items() if k != i and isinstance(s, str)]
+                        )).union(skills_min)
+                        temp_min_skills = set(itertools.chain.from_iterable(
+                            [s.split("; ") for k, s in min_group['Điểm mạnh'].items() if k != j and isinstance(s, str)]
+                        )).union(skills_max)
+
+                        skill_div = len(temp_max_skills) + len(temp_min_skills)
+                        score = new_diff - 0.01*skill_div
+
+                        if score < best_score:
+                            best_score = score
+                            best_swap = (i, j)
+
+                if best_swap is not None:
+                    i, j = best_swap
+                    tmp_row = max_group.loc[i].copy()
+                    max_group.loc[i] = min_group.loc[j]
+                    min_group.loc[j] = tmp_row
+
+                    max_scores[i], min_scores[j] = min_scores[j], max_scores[i]
+
+                    group_scores[max_idx] = max_scores
+                    group_scores[min_idx] = min_scores
+
+                    improved = True
+
+                    for g in [max_group, min_group]:
+                        leaders = g[g['Vai trò mong muốn'].str.contains('Nhóm trưởng', na=False)]
+                        g.attrs['Truong'] = leaders.iloc[0]['Họ tên'] if len(leaders) > 0 else g.loc[g['Điểm tổng'].idxmax(), 'Họ tên']
+        else:
             improved = False
-            avg_scores = [scores.mean() for scores in group_scores]
-            max_idx = avg_scores.index(max(avg_scores))
-            min_idx = avg_scores.index(min(avg_scores))
-            max_group = groups[max_idx]
-            min_group = groups[min_idx]
-            max_scores = group_scores[max_idx]
-            min_scores = group_scores[min_idx]
-
-            best_score = max(avg_scores) - min(avg_scores)
-            best_swap = None
-
-            for i, s_max in enumerate(max_scores):
-                for j, s_min in enumerate(min_scores):
-                    temp_max_scores = max_scores.copy()
-                    temp_min_scores = min_scores.copy()
-                    temp_max_scores[i], temp_min_scores[j] = s_min, s_max
-
-                    new_avg_scores = avg_scores.copy()
-                    new_avg_scores[max_idx] = temp_max_scores.mean()
-                    new_avg_scores[min_idx] = temp_min_scores.mean()
-                    new_diff = max(new_avg_scores) - min(new_avg_scores)
-
-                    skills_max = set(max_group['Điểm mạnh'].iloc[i].split("; ")) if pd.notna(max_group['Điểm mạnh'].iloc[i]) else set()
-                    skills_min = set(min_group['Điểm mạnh'].iloc[j].split("; ")) if pd.notna(min_group['Điểm mạnh'].iloc[j]) else set()
-                    temp_max_skills = set(itertools.chain.from_iterable(
-                        [s.split("; ") for k, s in max_group['Điểm mạnh'].items() if k != i and isinstance(s, str)]
-                    )).union(skills_min)
-                    temp_min_skills = set(itertools.chain.from_iterable(
-                        [s.split("; ") for k, s in min_group['Điểm mạnh'].items() if k != j and isinstance(s, str)]
-                    )).union(skills_max)
-
-                    skill_div = len(temp_max_skills) + len(temp_min_skills)
-                    score = new_diff - 0.01*skill_div
-
-                    if score < best_score:
-                        best_score = score
-                        best_swap = (i, j)
-
-            if best_swap is not None:
-                i, j = best_swap
-                tmp_row = max_group.loc[i].copy()
-                max_group.loc[i] = min_group.loc[j]
-                min_group.loc[j] = tmp_row
-
-                max_scores[i], min_scores[j] = min_scores[j], max_scores[i]
-
-                group_scores[max_idx] = max_scores
-                group_scores[min_idx] = min_scores
-
-                improved = True
-
-                for g in [max_group, min_group]:
-                    leaders = g[g['Vai trò mong muốn'].str.contains('Nhóm trưởng', na=False)]
-                    g.attrs['Truong'] = leaders.iloc[0]['Họ tên'] if len(leaders) > 0 else g.loc[g['Điểm tổng'].idxmax(), 'Họ tên']
 
         html = f"<h4>===== CA: {ca} | Số nhóm = {len(groups)} =====</h4>"
         for idx, g in enumerate(groups, 1):
