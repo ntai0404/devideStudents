@@ -334,7 +334,7 @@ def admin():
     if "is_admin" not in session:
         return redirect(url_for("login"))
 
-    classes = ["65HTTT"]
+    classes = ["65HTTT5"]
     selected_class = request.args.get("class")
     action = request.args.get("action")
 
